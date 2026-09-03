@@ -11,12 +11,14 @@ import { CreateStudentDto } from './dto/create-student.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
 import { CreateFacultyDto } from './dto/create-faculty.dto';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
+import { EventsGateway } from '../events/events.gateway';
 
 @Injectable()
 export class CoreMastersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: MasterDataCacheService,
+    private readonly eventsGateway: EventsGateway,
   ) {}
 
   // 1. University Master
@@ -153,6 +155,7 @@ export class CoreMastersService {
     });
 
     this.cache.invalidate('departments');
+    this.eventsGateway.broadcast('dashboard:stats:update', { type: 'department:created', id: created.id });
     return created;
   }
 
@@ -166,6 +169,7 @@ export class CoreMastersService {
     });
 
     this.cache.invalidate('departments');
+    this.eventsGateway.broadcast('dashboard:stats:update', { type: 'department:updated', id: updated.id });
     return updated;
   }
   // 4. Programs
@@ -305,6 +309,7 @@ export class CoreMastersService {
     });
 
     this.cache.invalidate('subjects');
+    this.eventsGateway.broadcast('dashboard:stats:update', { type: 'subject:created', id: created.id });
     return created;
   }
 
@@ -322,6 +327,7 @@ export class CoreMastersService {
     });
 
     this.cache.invalidate('subjects');
+    this.eventsGateway.broadcast('dashboard:stats:update', { type: 'subject:updated', id: updated.id });
     return updated;
   }
 
@@ -660,7 +666,7 @@ export class CoreMastersService {
     });
     if (existing) throw new BadRequestException(`Student with enrollment '${dto.enrollmentNo}' or email '${dto.email}' already exists.`);
 
-    return this.prisma.student.create({
+    const created = await this.prisma.student.create({
       data: {
         erpId: `STU${String(Date.now()).slice(-6)}`,
         enrollmentNo: dto.enrollmentNo.trim(),
@@ -682,6 +688,9 @@ export class CoreMastersService {
         batch: { select: { code: true } },
       },
     });
+
+    this.eventsGateway.broadcast('dashboard:stats:update', { type: 'student:created', id: created.id });
+    return created;
   }
 
   async updateStudent(id: string, dto: UpdateStudentDto, user?: any) {
@@ -699,7 +708,7 @@ export class CoreMastersService {
       }
     }
 
-    return this.prisma.student.update({
+    const updated = await this.prisma.student.update({
       where: { id },
       data: {
         firstName: isDlVerified && user?.role === 'STUDENT' ? student.firstName : (dto.firstName || (dto.name ? dto.name.trim() : student.firstName)),
@@ -710,6 +719,9 @@ export class CoreMastersService {
         status: dto.status || student.status,
       },
     });
+
+    this.eventsGateway.broadcast('dashboard:stats:update', { type: 'student:updated', id: updated.id });
+    return updated;
   }
 
   async bulkImportStudents(students: CreateStudentDto[]) {
@@ -801,7 +813,7 @@ export class CoreMastersService {
     });
     if (existing) throw new BadRequestException(`Faculty with code '${dto.employeeCode}' or email '${dto.email}' already exists.`);
 
-    return this.prisma.faculty.create({
+    const created = await this.prisma.faculty.create({
       data: {
         erpId: `FAC${String(Date.now()).slice(-6)}`,
         employeeCode: dto.employeeCode.trim(),
@@ -820,13 +832,16 @@ export class CoreMastersService {
         department: { select: { code: true, name: true } },
       },
     });
+
+    this.eventsGateway.broadcast('dashboard:stats:update', { type: 'faculty:created', id: created.id });
+    return created;
   }
 
   async updateFaculty(id: string, dto: Partial<CreateFacultyDto>) {
     const faculty = await this.prisma.faculty.findUnique({ where: { id } });
     if (!faculty) throw new NotFoundException('Faculty not found.');
 
-    return this.prisma.faculty.update({
+    const updated = await this.prisma.faculty.update({
       where: { id },
       data: {
         firstName: dto.firstName || (dto.name ? dto.name.trim() : faculty.firstName),
@@ -837,6 +852,9 @@ export class CoreMastersService {
         status: dto.status || faculty.status,
       },
     });
+
+    this.eventsGateway.broadcast('dashboard:stats:update', { type: 'faculty:updated', id: updated.id });
+    return updated;
   }
 
   async bulkImportFaculty(facultyList: CreateFacultyDto[]) {

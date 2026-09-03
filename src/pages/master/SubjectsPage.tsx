@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useSocket } from '../../context/SocketContext';
 import { db } from '../../services/db';
 import { Subject } from '../../types';
 import { DataTable, Column } from '../../components/common/DataTable';
@@ -12,18 +13,10 @@ import { EntityProfileModal } from '../../components/profile/EntityProfileModal'
 export const SubjectsPage: React.FC = () => {
   const { user, role, canMutate } = useAuth();
   const isFaculty = role === 'FACULTY';
+  const { socket } = useSocket();
 
-  const [subjects, setSubjects] = useState<Subject[]>(() => {
-    const all = db.getSubjects();
-    if (isFaculty && user) {
-      const fac = db.getFaculty().find(f => f.id === user.id || f.email === user.email);
-      const targetDept = fac?.departmentId || user.departmentId;
-      if (targetDept) {
-        return all.filter(s => s.departmentId === targetDept);
-      }
-    }
-    return all;
-  });
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
 
   const [viewingSubject, setViewingSubject] = useState<Subject | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -48,18 +41,53 @@ export const SubjectsPage: React.FC = () => {
   const departments = db.getDepartments();
   const students = db.getStudents();
 
-  const refreshData = () => {
-    const all = db.getSubjects();
-    if (isFaculty && user) {
-      const fac = db.getFaculty().find(f => f.id === user.id || f.email === user.email);
-      const targetDept = fac?.departmentId || user.departmentId;
-      if (targetDept) {
-        setSubjects(all.filter(s => s.departmentId === targetDept));
-        return;
+  const refreshData = async () => {
+    try {
+      setIsLoading(true);
+      const token = localStorage.getItem('token') || localStorage.getItem('sscit_auth_token');
+      // Adding large limit for standard loading
+      const res = await fetch('/api/v1/academic/subjects?limit=100', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const payload = await res.json();
+        let apiSubjects = payload.data || payload || [];
+        
+        // Filter based on faculty if needed
+        if (isFaculty && user) {
+          const facRes = await fetch(`/api/v1/faculty?email=${user.email}`, { headers: { Authorization: `Bearer ${token}` } });
+          if (facRes.ok) {
+            const facData = await facRes.json();
+            const fac = facData?.data?.[0];
+            const targetDept = fac?.departmentId || user.departmentId;
+            if (targetDept) {
+              apiSubjects = apiSubjects.filter((s: any) => s.departmentId === targetDept);
+            }
+          }
+        }
+        setSubjects(apiSubjects);
       }
+    } catch (err) {
+      console.error('Failed to fetch subjects', err);
+    } finally {
+      setIsLoading(false);
     }
-    setSubjects([...all]);
   };
+
+  useEffect(() => {
+    refreshData();
+    if (socket) {
+      const handleStatUpdate = (data: any) => {
+        if (data && data.type && data.type.startsWith('subject:')) {
+          refreshData();
+        }
+      };
+      socket.on('dashboard:stats:update', handleStatUpdate);
+      return () => {
+        socket.off('dashboard:stats:update', handleStatUpdate);
+      };
+    }
+  }, [socket]);
 
   const handleOpenAddModal = () => {
     setEditingItem(null);
@@ -91,24 +119,37 @@ export const SubjectsPage: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingItem) {
-      db.updateEntity<Subject>('subjects', editingItem.id, {
+    const token = localStorage.getItem('token') || localStorage.getItem('sscit_auth_token');
+
+    try {
+      const payload = {
         code, name, semesterId, programId, departmentId, type, credits, theoryHoursPerWeek, labHoursPerWeek, status
-      }, `Updated Subject ${name}`);
-    } else {
-      db.addEntity<Subject>('subjects', {
-        code, name, semesterId, programId, departmentId, type, credits, theoryHoursPerWeek, labHoursPerWeek, status
-      }, `Created Subject ${name}`);
+      };
+
+      if (editingItem) {
+        await fetch(`/api/v1/academic/subjects/${editingItem.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload)
+        });
+      } else {
+        await fetch(`/api/v1/academic/subjects`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload)
+        });
+      }
+      refreshData();
+      setIsModalOpen(false);
+    } catch (err) {
+      console.error('Failed to save subject', err);
     }
-    refreshData();
-    setIsModalOpen(false);
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (deletingItem) {
-      db.deleteEntity('subjects', deletingItem.id, `Deleted Subject ${deletingItem.name}`);
       refreshData();
       setDeletingItem(null);
     }

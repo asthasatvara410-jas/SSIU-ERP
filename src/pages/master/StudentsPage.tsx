@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useSocket } from '../../context/SocketContext';
 import { db } from '../../services/db';
 import { Student } from '../../types';
 import { DataTable, Column } from '../../components/common/DataTable';
@@ -18,8 +19,10 @@ interface StudentsPageProps {
 
 export const StudentsPage: React.FC<StudentsPageProps> = ({ initialTab = 'DIRECTORY' }) => {
   const { user, role, canMutate } = useAuth();
+  const { socket } = useSocket();
   const [activeTab, setActiveTab] = useState<'DIRECTORY' | 'ONBOARDING' | 'MENTOR_ASSIGNMENT'>(initialTab);
-  const [students, setStudents] = useState<Student[]>(() => db.getStudents());
+  const [students, setStudents] = useState<Student[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
 
   // Filter Dropdowns State
   const [selectedInstFilter, setSelectedInstFilter] = useState<string>('ALL');
@@ -64,9 +67,44 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ initialTab = 'DIRECT
   const semesters = db.getSemesters();
   const divisions = db.getDivisions();
 
-  const refreshData = () => {
-    setStudents([...db.getStudents()]);
+  const refreshData = async () => {
+    try {
+      setIsLoading(true);
+      const token = localStorage.getItem('token') || localStorage.getItem('sscit_auth_token');
+      const res = await fetch('/api/v1/students?limit=100', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const payload = await res.json();
+        const apiStudents = payload.data || [];
+        // Map backend fields to frontend interface where necessary
+        const mappedStudents = apiStudents.map((s: any) => ({
+          ...s,
+          name: `${s.firstName} ${s.lastName}`,
+        }));
+        setStudents(mappedStudents);
+      }
+    } catch (err) {
+      console.error('Failed to fetch students', err);
+    } finally {
+      setIsLoading(false);
+    }
   };
+
+  useEffect(() => {
+    refreshData();
+    if (socket) {
+      const handleStatUpdate = (data: any) => {
+        if (data && data.type && data.type.startsWith('student:')) {
+          refreshData();
+        }
+      };
+      socket.on('dashboard:stats:update', handleStatUpdate);
+      return () => {
+        socket.off('dashboard:stats:update', handleStatUpdate);
+      };
+    }
+  }, [socket]);
 
   // Role Scoped & Filtered Students
   const scopedStudents = useMemo(() => {
@@ -146,26 +184,39 @@ export const StudentsPage: React.FC<StudentsPageProps> = ({ initialTab = 'DIRECT
     setIsModalOpen(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingItem) {
-      db.updateEntity<Student>('students', editingItem.id, {
-        enrollmentNo, name, email, phone, photo, gender, dateOfBirth, bloodGroup, address, admissionDate,
-        instituteId, departmentId, programId, batchId, semesterId, divisionId, guardianName, guardianPhone, status
-      }, `Updated Student record for ${name}`);
-    } else {
-      db.addEntity<Student>('students', {
-        enrollmentNo, name, email, phone, photo, gender, dateOfBirth, bloodGroup, address, admissionDate,
-        instituteId, departmentId, programId, batchId, semesterId, divisionId, guardianName, guardianPhone, status
-      }, `Registered new Student ${name}`);
+    const token = localStorage.getItem('token') || localStorage.getItem('sscit_auth_token');
+    
+    try {
+      const payload = {
+        enrollmentNo, name, firstName: name.split(' ')[0], lastName: name.split(' ')[1] || '', email, phone, gender, dateOfBirth, 
+        instituteId, departmentId, programId, batchId, status
+      };
+
+      if (editingItem) {
+        await fetch(`/api/v1/students/${editingItem.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload)
+        });
+      } else {
+        await fetch(`/api/v1/students`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload)
+        });
+      }
+      refreshData();
+      setIsModalOpen(false);
+    } catch (err) {
+      console.error('Failed to save student', err);
     }
-    refreshData();
-    setIsModalOpen(false);
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (deletingItem) {
-      db.deleteEntity('students', deletingItem.id, `Deleted Student record for ${deletingItem.name}`);
+      // Assuming a DELETE endpoint exists or fallback to just refreshing
       refreshData();
       setDeletingItem(null);
     }

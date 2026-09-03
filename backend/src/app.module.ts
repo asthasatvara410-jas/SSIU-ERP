@@ -89,7 +89,6 @@ import { GovernmentIntegrationModule } from './government-integration/government
 import { NoticesModule } from './notices/notices.module';
 // Phase 8: Student Council Desk
 import { StudentCouncilModule } from './student-council/student-council.module';
-import { NotificationModule } from './communication/notification/notification.module';
 import { EventsModule } from './events/events.module';
 
 @Module({

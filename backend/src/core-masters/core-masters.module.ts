@@ -4,9 +4,10 @@ import { CoreMastersController } from './core-masters.controller';
 import { SupabaseMastersService } from './supabase-masters.service';
 import { SupabaseMastersController } from './supabase-masters.controller';
 import { AuthModule } from '../auth/auth.module';
+import { EventsModule } from '../events/events.module';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, EventsModule],
   controllers: [CoreMastersController, SupabaseMastersController],
   providers: [CoreMastersService, SupabaseMastersService],
   exports: [CoreMastersService, SupabaseMastersService],

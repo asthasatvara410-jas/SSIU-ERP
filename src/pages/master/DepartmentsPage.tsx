@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useSocket } from '../../context/SocketContext';
 import { db } from '../../services/db';
 import { Department } from '../../types';
 import { DataTable, Column } from '../../components/common/DataTable';
@@ -10,7 +11,9 @@ import { EntityProfileModal } from '../../components/profile/EntityProfileModal'
 
 export const DepartmentsPage: React.FC = () => {
   const { canMutate } = useAuth();
-  const [departments, setDepartments] = useState<Department[]>(() => db.getDepartments());
+  const { socket } = useSocket();
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [selectedInstituteId, setSelectedInstituteId] = useState<string>('ALL');
 
   const [viewingDepartment, setViewingDepartment] = useState<Department | null>(null);
@@ -29,9 +32,38 @@ export const DepartmentsPage: React.FC = () => {
 
   const institutes = db.getInstitutes();
 
-  const refreshData = () => {
-    setDepartments([...db.getDepartments()]);
+  const refreshData = async () => {
+    try {
+      setIsLoading(true);
+      const token = localStorage.getItem('token') || localStorage.getItem('sscit_auth_token');
+      const res = await fetch('/api/v1/departments', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const payload = await res.json();
+        setDepartments(payload);
+      }
+    } catch (err) {
+      console.error('Failed to fetch departments', err);
+    } finally {
+      setIsLoading(false);
+    }
   };
+
+  useEffect(() => {
+    refreshData();
+    if (socket) {
+      const handleStatUpdate = (data: any) => {
+        if (data && data.type && data.type.startsWith('department:')) {
+          refreshData();
+        }
+      };
+      socket.on('dashboard:stats:update', handleStatUpdate);
+      return () => {
+        socket.off('dashboard:stats:update', handleStatUpdate);
+      };
+    }
+  }, [socket]);
 
   const filteredDepartments = useMemo(() => {
     if (selectedInstituteId === 'ALL') return departments;
@@ -62,24 +94,37 @@ export const DepartmentsPage: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingItem) {
-      db.updateEntity<Department>('departments', editingItem.id, {
+    const token = localStorage.getItem('token') || localStorage.getItem('sscit_auth_token');
+
+    try {
+      const payload = {
         code, name, instituteId, hodName, email, phone, status
-      }, `Updated Department ${name}`);
-    } else {
-      db.addEntity<Department>('departments', {
-        code, name, instituteId, hodName, email, phone, status
-      }, `Created new Department ${name}`);
+      };
+
+      if (editingItem) {
+        await fetch(`/api/v1/departments/${editingItem.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload)
+        });
+      } else {
+        await fetch(`/api/v1/departments`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload)
+        });
+      }
+      refreshData();
+      setIsModalOpen(false);
+    } catch (err) {
+      console.error('Failed to save department', err);
     }
-    refreshData();
-    setIsModalOpen(false);
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (deletingItem) {
-      db.deleteEntity('departments', deletingItem.id, `Deleted Department ${deletingItem.name}`);
       refreshData();
       setDeletingItem(null);
     }

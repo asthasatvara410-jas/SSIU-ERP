@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useSocket } from '../../context/SocketContext';
 import { db } from '../../services/db';
 import { Faculty } from '../../types';
 import { DataTable, Column } from '../../components/common/DataTable';
@@ -12,7 +13,9 @@ import { Eye } from 'lucide-react';
 
 export const FacultyPage: React.FC = () => {
   const { user, role, canMutate } = useAuth();
-  const [facultyList, setFacultyList] = useState<Faculty[]>(() => db.getFaculty());
+  const { socket } = useSocket();
+  const [facultyList, setFacultyList] = useState<Faculty[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
 
   // Filter State
   const [selectedInstFilter, setSelectedInstFilter] = useState<string>('ALL');
@@ -48,9 +51,43 @@ export const FacultyPage: React.FC = () => {
   const institutes = db.getInstitutes();
   const departments = db.getDepartments();
 
-  const refreshData = () => {
-    setFacultyList([...db.getFaculty()]);
+  const refreshData = async () => {
+    try {
+      setIsLoading(true);
+      const token = localStorage.getItem('token') || localStorage.getItem('sscit_auth_token');
+      const res = await fetch('/api/v1/faculty?limit=100', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const payload = await res.json();
+        const apiFaculty = payload.data || [];
+        const mappedFaculty = apiFaculty.map((f: any) => ({
+          ...f,
+          name: `${f.firstName} ${f.lastName}`,
+        }));
+        setFacultyList(mappedFaculty);
+      }
+    } catch (err) {
+      console.error('Failed to fetch faculty', err);
+    } finally {
+      setIsLoading(false);
+    }
   };
+
+  useEffect(() => {
+    refreshData();
+    if (socket) {
+      const handleStatUpdate = (data: any) => {
+        if (data && data.type && data.type.startsWith('faculty:')) {
+          refreshData();
+        }
+      };
+      socket.on('dashboard:stats:update', handleStatUpdate);
+      return () => {
+        socket.off('dashboard:stats:update', handleStatUpdate);
+      };
+    }
+  }, [socket]);
 
   // Role Scoped & Filtered Faculty List
   const scopedFaculty = useMemo(() => {
@@ -122,26 +159,38 @@ export const FacultyPage: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingItem) {
-      db.updateEntity<Faculty>('faculty', editingItem.id, {
-        employeeId, name, email, phone, photo, designation, instituteId, departmentId,
-        qualification, specialization, joiningDate, dateOfBirth, bloodGroup, address, experienceYears, status
-      }, `Updated Faculty record for ${name}`);
-    } else {
-      db.addEntity<Faculty>('faculty', {
-        employeeId, name, email, phone, photo, designation, instituteId, departmentId,
-        qualification, specialization, joiningDate, dateOfBirth, bloodGroup, address, experienceYears, subjectIds: [], status
-      }, `Added new Faculty ${name}`);
+    const token = localStorage.getItem('token') || localStorage.getItem('sscit_auth_token');
+
+    try {
+      const payload = {
+        employeeCode: employeeId, name, firstName: name.split(' ')[0], lastName: name.split(' ')[1] || '', email, phone, designation, instituteId, departmentId,
+        qualification, specialization, joiningDate, dateOfBirth, status
+      };
+
+      if (editingItem) {
+        await fetch(`/api/v1/faculty/${editingItem.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload)
+        });
+      } else {
+        await fetch(`/api/v1/faculty`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload)
+        });
+      }
+      refreshData();
+      setIsModalOpen(false);
+    } catch (err) {
+      console.error('Failed to save faculty', err);
     }
-    refreshData();
-    setIsModalOpen(false);
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (deletingItem) {
-      db.deleteEntity('faculty', deletingItem.id, `Deleted Faculty record for ${deletingItem.name}`);
       refreshData();
       setDeletingItem(null);
     }
