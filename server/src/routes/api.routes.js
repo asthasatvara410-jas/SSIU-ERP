@@ -1,31 +1,31 @@
 const express = require('express');
 const { verifyToken } = require('../middlewares/auth.middleware');
 const { authorizeRole } = require('../middlewares/role.middleware');
-const CrudController = require('../controllers/crud.controller');
+const SqlCrudController = require('../controllers/sqlCrud.controller');
 
 const router = express.Router();
 
-// Define all collections needed for the ERP
+// Define all collections needed for the ERP and their singular event names
 const collections = [
-  'students',
-  'faculty',
-  'departments',
-  'courses',
-  'subjects',
-  'academicYears',
-  'semesters',
-  'attendance',
-  'fees',
-  'examinations',
-  'results',
-  'timetables',
-  'notices',
-  'documents'
+  { table: 'students', singular: 'student' },
+  { table: 'faculty', singular: 'faculty' },
+  { table: 'departments', singular: 'department' },
+  { table: 'courses', singular: 'course' },
+  { table: 'subjects', singular: 'subject' },
+  { table: 'academicYears', singular: 'academicYear' },
+  { table: 'semesters', singular: 'semester' },
+  { table: 'attendance', singular: 'attendance' },
+  { table: 'fees', singular: 'fee' },
+  { table: 'examinations', singular: 'examination' },
+  { table: 'results', singular: 'result' },
+  { table: 'timetables', singular: 'timetable' },
+  { table: 'notices', singular: 'notice' },
+  { table: 'documents', singular: 'document' }
 ];
 
 // Dynamically generate CRUD routes for all entities
-collections.forEach((collection) => {
-  const controller = new CrudController(collection);
+collections.forEach(({ table, singular }) => {
+  const controller = new SqlCrudController(table, singular);
   
   // Create router for this specific collection
   const collectionRouter = express.Router();
@@ -43,12 +43,12 @@ collections.forEach((collection) => {
   collectionRouter.get('/:id', controller.getById);
 
   // Role-based Write Access (simplified logic for demonstration)
-  if (['attendance', 'results', 'timetables', 'documents'].includes(collection)) {
+  if (['attendance', 'results', 'timetables', 'documents'].includes(table)) {
     // Faculty & HOD can write academic data
     collectionRouter.post('/', academicStaff, controller.create);
     collectionRouter.put('/:id', academicStaff, controller.update);
     collectionRouter.delete('/:id', adminOnly, controller.delete); // Only admins can completely delete
-  } else if (collection === 'notices') {
+  } else if (table === 'notices') {
     // Admins and HODs can post notices
     const noticePosters = authorizeRole(['Super Admin', 'Admin', 'HOD']);
     collectionRouter.post('/', noticePosters, controller.create);
@@ -62,7 +62,7 @@ collections.forEach((collection) => {
   }
 
   // Mount to main router
-  router.use(`/${collection}`, collectionRouter);
+  router.use(`/${table}`, collectionRouter);
 });
 
 module.exports = router;

@@ -64,6 +64,12 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+const http = require('http');
+const socketService = require('./services/socket.service');
+
+const server = http.createServer(app);
+socketService.init(server);
+
+server.listen(PORT, () => {
+  console.log(`Server and Socket.IO are running on port ${PORT}`);
 });
