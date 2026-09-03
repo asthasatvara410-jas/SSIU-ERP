@@ -19,11 +19,41 @@ app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'success', message: 'College ERP API is running' });
 });
 
+// Firebase Connection Test Route
+const { db } = require('./config/firebaseAdmin');
+app.get('/api/firebase-test', async (req, res) => {
+  try {
+    if (!db) {
+      return res.status(500).json({ status: 'error', message: 'Firestore is not initialized.' });
+    }
+    // Write test
+    const testDoc = db.collection('system_tests').doc('connection_test');
+    await testDoc.set({
+      message: 'Connection successful',
+      timestamp: new Date()
+    });
+    
+    // Read test
+    const docSnapshot = await testDoc.get();
+    
+    res.status(200).json({
+      status: 'success',
+      message: 'Successfully communicated with Firestore!',
+      data: docSnapshot.data()
+    });
+  } catch (error) {
+    console.error('Firebase test error:', error);
+    res.status(500).json({ status: 'error', message: 'Firebase connection failed', error: error.message });
+  }
+});
+
 // Import Routes
 const userRoutes = require('./routes/user.routes');
-// app.use('/api/auth', authRoutes); // Auth routes are mostly handled by Firebase Auth on the frontend, but we expose /me via user routes
+const apiRoutes = require('./routes/api.routes');
+
 app.use('/api/users', userRoutes);
 app.use('/api/auth', userRoutes); // For the /me route to get role
+app.use('/api', apiRoutes); // Mount all dynamic CRUD routes (students, faculty, etc.)
 
 // Global Error Handler
 app.use((err, req, res, next) => {

@@ -1,4 +1,4 @@
-const { db, admin } = require('../config/firebase');
+const { db, admin } = require('../config/firebaseAdmin');
 
 // Fetch current user's role from Firestore
 exports.getCurrentUserRole = async (req, res, next) => {

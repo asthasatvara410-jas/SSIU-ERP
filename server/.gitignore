@@ -2,3 +2,10 @@ node_modules
 .env
 .env.local
 .DS_Store
+
+# Firebase service account and sensitive JSON keys
+serviceAccountKey.json
+firebase-adminsdk*.json
+*.json
+!package.json
+!package-lock.json
