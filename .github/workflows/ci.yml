@@ -1,0 +1,43 @@
+name: SSIU ERP Enterprise CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  build-and-test:
+    name: Build, Governance & Security Verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Node.js Runtime (v20)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 📦 Install Frontend & Root Dependencies
+        run: npm install
+
+      - name: 📦 Install Backend Dependencies
+        run: npm --prefix backend install
+
+      - name: 🧬 Generate Prisma Client
+        run: npm --prefix backend run prisma:generate
+
+      - name: 🔍 TypeScript Static Type Checking
+        run: npx tsc --noEmit
+
+      - name: 🤖 AI Student Helpdesk Security & Provider Tests
+        run: npx vitest run src/tests/aiStudentHelpdeskEngine.test.ts
+
+      - name: 🏛️ Modular ERP Governance Tests
+        run: npx vitest run src/modules/
+
+      - name: 🏗️ Production Frontend & Client Build
+        run: npm run build

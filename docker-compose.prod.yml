@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  # ------------------------------------------------------------------
+  # Primary Production Database (PostgreSQL 16)
+  # ------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: ssiu-erp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ssiu_erp_prod}
+      POSTGRES_USER: ${POSTGRES_USER:-ssiu_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ChangeThisSuperSecretDbPass2026}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - ssiu_pg_data:/var/lib/postgresql/data
+      - ./scripts/backup:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ssiu_admin} -d ${POSTGRES_DB:-ssiu_erp_prod}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ------------------------------------------------------------------
+  # SSIU ERP Backend Application Engine & AI Helpdesk
+  # ------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ssiu-erp-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-ssiu_admin}:${POSTGRES_PASSWORD:-ChangeThisSuperSecretDbPass2026}@postgres:5432/${POSTGRES_DB:-ssiu_erp_prod}?schema=public
+      JWT_SECRET: ${JWT_SECRET}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    ports:
+      - "${PORT:-3001}:3001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  ssiu_pg_data:
+    driver: local
