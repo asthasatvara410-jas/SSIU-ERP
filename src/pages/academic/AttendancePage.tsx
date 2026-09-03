@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useSocket } from '../../context/SocketContext';
 import { db } from '../../services/db';
 import { attendanceService, StudentImportRow, AttendanceImportRow } from '../../services/attendanceService';
 import { Badge } from '../../components/common/Badge';
@@ -23,6 +24,7 @@ type TabType = 'ATTENDANCE' | 'HISTORY' | 'SUBJECT_STATS' | 'REPORTS' | 'IMPORT_
 
 export const AttendancePage: React.FC<AttendancePageProps> = ({ initialTab = 'ATTENDANCE' }) => {
   const { user, role } = useAuth();
+  const { socket, isConnected } = useSocket();
 
   // Defense-in-depth guard: Students MUST NOT access faculty attendance marking interface
   if (role === 'STUDENT') {
@@ -54,7 +56,31 @@ export const AttendancePage: React.FC<AttendancePageProps> = ({ initialTab = 'AT
   const programs = useMemo(() => db.getPrograms(), [refreshKey]);
   const departments = useMemo(() => db.getDepartments(), [refreshKey]);
   const semesters = useMemo(() => db.getSemesters(), [refreshKey]);
-  const allSessions = useMemo(() => db.getAttendanceSessions(), [refreshKey]);
+  
+  // Real-time Sessions State
+  const [allSessions, setAllSessions] = useState<AttendanceSession[]>([]);
+
+  // Load initial data
+  useEffect(() => {
+    setAllSessions(db.getAttendanceSessions());
+  }, [refreshKey]);
+
+  // Listen to WebSocket events
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleAttendanceCreated = (newSession: any) => {
+      console.log('Real-Time Event [attendance:created]:', newSession);
+      setAllSessions(prev => [newSession, ...prev]);
+      showToast('info', `New attendance marked for ${newSession.subjectId} (via Real-Time Sync)`);
+    };
+
+    socket.on('attendance:created', handleAttendanceCreated);
+    
+    return () => {
+      socket.off('attendance:created', handleAttendanceCreated);
+    };
+  }, [socket]);
 
   // ─── 1. TAB 1: MARK ATTENDANCE STATE ───────────────────────────────────────
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>(subjects[0]?.id || 'sub-dsa');

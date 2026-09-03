@@ -35,9 +35,14 @@ export interface SubjectAttendanceStat {
   finalApprovedAt?: string;
 }
 
+import { EventsGateway } from '../events/events.gateway';
+
 @Injectable()
 export class AttendanceService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly eventsGateway: EventsGateway
+  ) {}
 
   // Centralized Config Fallback
   private defaultPolicy = {
@@ -185,25 +190,22 @@ export class AttendanceService {
       where: { studentId: student.id }
     });
 
-    // Default subject baseline mappings if no explicit session logs exist
-    const defaultSubjectProfiles: Record<string, { total: number; present: number; absent: number }> = {
-      'sub-dbms': { total: 40, present: 38, absent: 2 }, // 95.0% -> Eligible
-      'sub-cn': { total: 40, present: 34, absent: 6 },   // 85.0% -> Eligible
-      'sub-dsa': { total: 40, present: 28, absent: 12 },  // 70.0% -> Shortage (< 75%)
-      'sub-webtech': { total: 40, present: 37, absent: 3 }, // 92.5% -> Eligible
-      'sub-ai': { total: 40, present: 36, absent: 4 },    // 90.0% -> Eligible
-      'sub-os': { total: 40, present: 27, absent: 13 }    // 67.5% -> Shortage (< 75%)
-    };
+    // Fetch actual attendance records from the database
+    const attendanceRecords = await this.prisma.classAttendanceRecord.findMany({
+      where: { studentId: student.id },
+      include: { session: true }
+    });
 
     const results: SubjectAttendanceStat[] = [];
 
     for (const subj of subjects) {
-      const profile = defaultSubjectProfiles[subj.id] || { total: 40, present: 32, absent: 8 };
-      const total = profile.total;
-      const present = profile.present;
-      const absent = profile.absent;
+      // Calculate real attendance for this subject
+      const subjectRecords = attendanceRecords.filter(r => r.session.subjectId === subj.id);
+      const total = subjectRecords.length;
+      const present = subjectRecords.filter(r => r.status === 'PRESENT' || r.status === 'LATE').length;
+      const absent = subjectRecords.filter(r => r.status === 'ABSENT').length;
 
-      const rawPct = (present / total) * 100;
+      const rawPct = total > 0 ? (present / total) * 100 : 100; // default 100% if no classes held
       const percentage = Math.round(rawPct * 10) / 10;
       const shortagePercentage = percentage < minRequiredPct ? Math.round((minRequiredPct - percentage) * 10) / 10 : 0;
 
@@ -1228,7 +1230,7 @@ export class AttendanceService {
   }
 
   /**
-   * 11. CREATE OR RECORD ATTENDANCE SESSION
+   * 11. CREATE OR RECORD ATTENDANCE SESSION (REAL-TIME DB SAVE)
    */
   async createAttendanceSession(dto: CreateAttendanceSessionDto, user: any) {
     const roles: string[] = user?.roles || (user?.role ? [user.role] : []);
@@ -1236,29 +1238,56 @@ export class AttendanceService {
       throw new ForbiddenException('Students are not authorized to mark or submit attendance sessions.');
     }
 
-    const sessionId = `att-sess-${Date.now()}`;
     const totalRecords = dto.records?.length || 0;
     const presentCount = dto.records?.filter(r => r.status === 'PRESENT').length || 0;
     const absentCount = dto.records?.filter(r => r.status === 'ABSENT').length || 0;
     const lateCount = dto.records?.filter(r => r.status === 'LATE').length || 0;
 
-    return {
-      id: sessionId,
-      subjectId: dto.subjectId,
-      divisionId: dto.divisionId,
-      facultyId: user?.id,
-      facultyName: user?.username || user?.name || 'Faculty Member',
-      date: dto.date,
-      lectureNo: dto.lectureNo,
-      timeSlot: dto.timeSlot || '10:00 AM - 11:00 AM',
-      topicTaught: dto.topicTaught || 'Curriculum Delivery Session',
-      status: 'SUBMITTED',
+    // Use a transaction to ensure session and records are saved atomically
+    const session = await this.prisma.$transaction(async (tx) => {
+      return await tx.classAttendanceSession.create({
+        data: {
+          subjectId: dto.subjectId,
+          divisionId: dto.divisionId,
+          facultyId: user?.id || 'default-faculty',
+          date: dto.date ? new Date(dto.date) : new Date(),
+          lectureNo: dto.lectureNo,
+          timeSlot: dto.timeSlot,
+          topicTaught: dto.topicTaught,
+          status: 'SUBMITTED',
+          records: {
+            create: dto.records?.map(r => ({
+              studentId: r.studentId,
+              status: r.status,
+              remarks: r.remarks
+            })) || []
+          }
+        },
+        include: {
+          records: true
+        }
+      });
+    });
+
+    const response = {
+      id: session.id,
+      subjectId: session.subjectId,
+      divisionId: session.divisionId,
+      facultyId: session.facultyId,
+      date: session.date,
+      lectureNo: session.lectureNo,
+      status: session.status,
       totalRecords,
       presentCount,
       absentCount,
       lateCount,
-      submittedAt: new Date().toISOString()
+      submittedAt: session.createdAt.toISOString()
     };
+
+    // Emit real-time WebSocket event
+    this.eventsGateway.broadcast('attendance:created', response);
+
+    return response;
   }
 
   /**

@@ -269,6 +269,7 @@ model Student {
   transportAllotments    TransportAllotment[]
   transportPasses        TransportPass[]
   transportAttendances   TransportAttendance[]
+  classAttendances       ClassAttendanceRecord[]
   transportComplaints    TransportComplaint[]
   startupMemberships     StartupMember[]
   placementApplications  PlacementApplication[]
@@ -9682,12 +9683,45 @@ model ExamAuditLog {
   @@index([action])
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// ADDED: CLASSROOM ATTENDANCE MODELS (Phase 2 Real-Time Migration)
+// ──────────────────────────────────────────────────────────────────────────────
 
+model ClassAttendanceSession {
+  id          String   @id @default(uuid())
+  subjectId   String
+  divisionId  String?
+  facultyId   String
+  date        DateTime
+  lectureNo   Int?
+  timeSlot    String?
+  topicTaught String?
+  status      String   @default("SUBMITTED") // SUBMITTED, LOCKED, CANCELLED
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
+  records     ClassAttendanceRecord[]
 
+  @@index([subjectId])
+  @@index([facultyId])
+  @@index([date])
+}
 
+model ClassAttendanceRecord {
+  id        String   @id @default(uuid())
+  sessionId String
+  studentId String
+  status    String   // PRESENT, ABSENT, LATE, EXCUSED
+  remarks   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
+  session   ClassAttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  student   Student                @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
-
+  @@unique([sessionId, studentId])
+  @@index([sessionId])
+  @@index([studentId])
+}
 
 
